@@ -30,6 +30,6 @@ transformers_stream_generator
 # torchvision==0.16.0
 tiktoken==0.7.0
 google-generativeai==0.6.0
-llava @ git+https://github.com/haotian-liu/LLaVA@main # if you want to use llava
-#llavajp @ git+https://github.com/yuichiro2023/LLaVA-JP@heron # if you want to use llavajp
+#llava @ git+https://github.com/haotian-liu/LLaVA@main # if you want to use llava
+llavajp @ git+https://github.com/hibikaze-git/LLaVA-JP@feature/package # if you want to use llavajp
 anthropic==0.28.0
