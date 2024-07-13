@@ -41,4 +41,4 @@ generation:
     do_sample: false
     temperature: 0.0
     top_p: 0.0
-    no_repeat_ngram_size: 2
+    no_repeat_ngram_size: 3
