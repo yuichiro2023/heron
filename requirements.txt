@@ -31,5 +31,6 @@ transformers_stream_generator
 tiktoken==0.7.0
 google-generativeai==0.6.0
 #llava @ git+https://github.com/haotian-liu/LLaVA@main # if you want to use llava
-llavajp @ git+https://github.com/hibikaze-git/LLaVA-JP@feature/package # if you want to use llavajp
+#llavajp @ git+https://github.com/hibikaze-git/LLaVA-JP@feature/package # if you want to use llavajp
+llavajp @ git+https://github.com/hibikaze-git/LLaVA-JP@feature/tanuki-moe
 anthropic==0.28.0
