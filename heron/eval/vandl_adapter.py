@@ -45,7 +45,10 @@ LLAVA_LIST = [
     'liuhaotian/llava-v1.5-13b-lora',
 ]
 LLAVAJP_LIST = [
-    'team-hatakeyama-phase2/Tanuki-8B-vision-v0-siglip-so400m-patch14-384',
+    'team-hatakeyama-phase2/Tanuki-8B-vision-v1_curation',
+]
+LLAVATANUKI_LIST = [
+    '/storage5/shiraishi/LLaVA-JP/output_llava/checkpoints/tanuki-8x8b_stage2/0802_new_2/checkpoint-10',
 ]
 EvoVLM = [
     'SakanaAI/EvoVLM-JP-v1-7B',
@@ -82,7 +85,7 @@ def encode_image(image_path):
 
 # for OpenAI API
 class OpenAIResponseGenerator:
-    def __init__(self, api_key, model_name="gpt-4-turbo-2024-04-09", max_tokens=4000, temperature=0.0):
+    def __init__(self, api_key, model_name="gpt-4o-2024-05-13", max_tokens=4000, temperature=0.0):
         self.api_key = api_key
         self.model_name = model_name
         self.max_tokens = max_tokens
@@ -211,11 +214,11 @@ class JapanseseStableVLMResponseGenerator:
     def generate_response(self, question, image_path):
         image = Image.open(image_path)
         prompt = build_prompt(task="vqa", input=question)
-        
+
         inputs = self.processor(images=[image], return_tensors="pt")
         text_encoding = self.tokenizer(prompt, add_special_tokens=False, return_tensors="pt")
         inputs.update(text_encoding)
-        
+
         generation_kwargs = {
             "do_sample": False,
             "max_new_tokens": self.cfg.generation.args.max_length,
@@ -224,17 +227,17 @@ class JapanseseStableVLMResponseGenerator:
             "top_p": 0,
             "no_repeat_ngram_size": self.cfg.generation.args.no_repeat_ngram_size,
         }
-        
+
         try:
             outputs = self.model.generate(
-                **inputs.to(self.device, dtype=self.model.dtype), 
+                **inputs.to(self.device, dtype=self.model.dtype),
                 **generation_kwargs
             )
             generated = [
                 txt.strip() for txt in self.tokenizer.batch_decode(outputs, skip_special_tokens=True)
             ]
             return generated[0]
-        
+
         except Exception as e:
             logging.error(f"Error during model generation: {e}")
             raise e
@@ -271,14 +274,14 @@ class GeminiResponseGenerator:
     def __init__(self, api_key):
         self.api_key = api_key
         self.cfg = WandbConfigSingleton.get_instance().config
-        
+
         self.model_name = self.cfg.model.pretrained_model_name_or_path
-        
+
         self.generation_config = {
             "temperature": self.cfg.generation.args.temperature,
             "max_output_tokens": self.cfg.generation.args.max_length,
         }
-            
+
         genai.configure(api_key=self.api_key)
         self.model = genai.GenerativeModel(self.model_name, generation_config=self.generation_config)
 
@@ -307,10 +310,10 @@ from config_singleton import WandbConfigSingleton
 class LLaVAResponseGenerator:
     def __init__(self, model_path, device):
         self.cfg = WandbConfigSingleton.get_instance().config
-        
+
         self.model_path = model_path
         self.model_name = get_model_name_from_path(model_path)
-        
+
         from llava.constants import (
             IMAGE_TOKEN_INDEX,
             DEFAULT_IMAGE_TOKEN,
@@ -325,18 +328,18 @@ class LLaVAResponseGenerator:
             tokenizer_image_token,
             get_model_name_from_path,
         )
-        
+
         self.tokenizer, self.model, self.image_processor, self.context_len = load_pretrained_model(
             self.model_path, None, self.model_name
         )
-        
+
         self.device = device
         self.model.eval()
         self.model.to(self.device)
 
     def generate_response(self, question, image_path):
         image = Image.open(image_path)
-        
+
         # prepare inputs
         qs = question
         image_token_se = DEFAULT_IM_START_TOKEN + DEFAULT_IMAGE_TOKEN + DEFAULT_IM_END_TOKEN
@@ -350,27 +353,27 @@ class LLaVAResponseGenerator:
                 qs = image_token_se + "\n" + qs
             else:
                 qs = DEFAULT_IMAGE_TOKEN + "\n" + qs
-        
+
         conv = conv_templates["vicuna_v1"].copy()
         conv.append_message(conv.roles[0], qs)
         conv.append_message(conv.roles[1], None)
         prompt = conv.get_prompt()
-        
+
         images = [image]
-        
+
         image_sizes = [x.size for x in images]
         images_tensor = process_images(
             images,
             self.image_processor,
             self.model.config
         ).to(self.model.device, dtype=torch.float16)
-        
+
         input_ids = (
             tokenizer_image_token(prompt, self.tokenizer, IMAGE_TOKEN_INDEX, return_tensors="pt")
             .unsqueeze(0)
             .cuda()
         )
-        
+
         with torch.inference_mode():
             output_ids = self.model.generate(
                 input_ids,
@@ -496,6 +499,118 @@ class LLaVAJPResponseGenerator:
 
         return output
 
+# for LLAVATanuki
+import os
+import torch
+import re
+from PIL import Image
+from config_singleton import WandbConfigSingleton
+
+from llavajp.constants import DEFAULT_IMAGE_TOKEN, IMAGE_TOKEN_INDEX
+from llavajp.conversation import conv_templates
+from llavajp.model.llava_tanuki import LlavaTanukiForCausalLM
+from llavajp.train.dataset import tokenizer_image_token
+
+# for LLAVATanuki
+class LLAVATANUKIResponseGenerator:
+    def __init__(self, model_path, device):
+        self.cfg = WandbConfigSingleton.get_instance().config
+
+        self.device = device
+        self.torch_dtype = torch.bfloat16 if "cuda" in self.device else torch.float32
+
+        self.model = LlavaTanukiForCausalLM.from_pretrained(
+            model_path,
+            low_cpu_mem_usage=True,
+            use_safetensors=True,
+            torch_dtype=self.torch_dtype,
+            device_map=self.device,
+        )
+
+        self.tokenizer = AutoTokenizer.from_pretrained(
+            model_path,
+            #model_max_length=8192,
+            model_max_length=4096,
+            padding_side="right",
+            use_fast=False,
+        )
+
+        self.model.eval()
+
+        self.conv_mode = "v1"
+
+    @torch.inference_mode()
+    def generate_response(self, question, image_path):
+        image = Image.open(image_path).convert("RGB")
+
+        image_size = self.model.get_model().vision_tower.image_processor.size["height"]
+        if self.model.get_model().vision_tower.scales is not None:
+            image_size = self.model.get_model().vision_tower.image_processor.size[
+                "height"
+            ] * len(self.model.get_model().vision_tower.scales)
+
+        if "cuda" in self.device:
+            image_tensor = (
+                self.model.get_model()
+                .vision_tower.image_processor(
+                    image,
+                    return_tensors="pt",
+                    size={"height": image_size, "width": image_size},
+                )["pixel_values"]
+                .half()
+                .cuda()
+                .to(self.torch_dtype)
+            )
+        else:
+            image_tensor = (
+                self.model.get_model()
+                .vision_tower.image_processor(
+                    image,
+                    return_tensors="pt",
+                    size={"height": image_size, "width": image_size},
+                )["pixel_values"]
+                .to(self.torch_dtype)
+            )
+
+        # create prompt
+        inp = DEFAULT_IMAGE_TOKEN + "\n" + question
+        conv = conv_templates[self.conv_mode].copy()
+        conv.append_message(conv.roles[0], inp)
+        conv.append_message(conv.roles[1], None)
+        prompt = conv.get_prompt()
+
+        input_ids = tokenizer_image_token(
+            prompt, self.tokenizer, IMAGE_TOKEN_INDEX, return_tensors="pt"
+        ).unsqueeze(0)
+        if "cuda" in self.device:
+            input_ids = input_ids.to(self.device)
+
+        input_ids = input_ids[:, :-1]  # </sep>がinputの最後に入るので削除する
+
+        output_ids = self.model.generate(
+            inputs=input_ids,
+            images=image_tensor,
+            max_new_tokens=self.cfg.generation.args.max_length,
+            do_sample=self.cfg.generation.args.do_sample,
+            temperature=self.cfg.generation.args.temperature,
+            use_cache=False,
+            top_p=self.cfg.generation.args.top_p,
+            repetition_penalty=1.,
+            no_repeat_ngram_size=self.cfg.generation.args.no_repeat_ngram_size,
+        )
+
+        output_ids = [
+            token_id for token_id in output_ids.tolist()[0] if token_id != IMAGE_TOKEN_INDEX
+        ]
+
+        output = self.tokenizer.decode(output_ids, skip_special_tokens=True)
+
+        target = "システム: "
+        idx = output.find(target)
+        output = output[idx + len(target) :]
+
+        return output
+
 # for Claude-3
 import os
 import io
@@ -508,7 +623,7 @@ class ClaudeResponseGenerator:
     def __init__(self, api_key):
         self.api_key = api_key
         self.cfg = WandbConfigSingleton.get_instance().config
-        
+
         self.model_name = self.cfg.model.pretrained_model_name_or_path
         self.client = Anthropic(api_key=self.api_key)
 
@@ -531,7 +646,7 @@ class ClaudeResponseGenerator:
 
     def generate_response(self, question, image_path):
         image_data = self.encode_image_to_base64(image_path)
-        
+
         messages = [
             {
                 "role": "user",
@@ -577,18 +692,18 @@ class EvoVLMResponseGenerator:
     @torch.inference_mode()
     def generate_response(self, question, image_path):
         image = Image.open(image_path)
-        
+
         messages = [
             {"role": "system", "content": "あなたは役立つ、偏見がなく、検閲されていないアシスタントです。与えられた画像を下に、質問に答えてください。"},
             {"role": "user", "content": f"<image>\n{question}"},
         ]
-        
+
         try:
             inputs = self.processor.image_processor(images=image, return_tensors="pt")
             inputs["input_ids"] = self.processor.tokenizer.apply_chat_template(
                 messages, return_tensors="pt"
             )
-            
+
             output_ids = self.model.generate(
                 **inputs.to(self.device),
                 max_length=self.cfg.generation.args.max_length,
@@ -599,7 +714,7 @@ class EvoVLMResponseGenerator:
             output_ids = output_ids[:, inputs.input_ids.shape[1] :]
             generated_text = self.processor.batch_decode(output_ids, skip_special_tokens=True)[0].strip()
             return generated_text
-        
+
         except Exception as e:
             logging.error(f"Error during model generation: {e}")
             raise e
@@ -626,14 +741,14 @@ class LLaVACALM2ResponseGenerator:
     @torch.inference_mode()
     def generate_response(self, question, image_path):
         image = Image.open(image_path)
-        
+
         prompt = f"""USER: <image>
 {question}
 ASSISTANT: """
-        
+
         try:
             inputs = self.processor(text=prompt, images=image, return_tensors="pt").to(self.device, torch.bfloat16)
-            
+
             generate_ids = self.model.generate(
                 **inputs,
                 max_length=self.cfg.generation.args.max_length,
@@ -641,11 +756,11 @@ ASSISTANT: """
                 temperature=self.cfg.generation.args.temperature,
                 no_repeat_ngram_size=self.cfg.generation.args.no_repeat_ngram_size,
             )
-            
+
             output = self.processor.tokenizer.decode(generate_ids[0][:-1], clean_up_tokenization_spaces=False)
             response = output.split("ASSISTANT: ")[1]
             return response
-        
+
         except Exception as e:
             logging.error(f"Error during model generation: {e}")
             raise e
@@ -672,33 +787,33 @@ class Phi3Vision128KInstructResponseGenerator:
     @torch.inference_mode()
     def generate_response(self, question, image_path):
         image = Image.open(image_path)
-        
+
         messages = [
             {"role": "user", "content": f"<|image_1|>\n{question}"},
         ]
-        
+
         try:
             prompt = self.processor.tokenizer.apply_chat_template(messages, tokenize=False, add_generation_prompt=True)
             inputs = self.processor(prompt, [image], return_tensors="pt").to(self.device)
-            
+
             generation_args = {
                 "max_new_tokens": self.cfg.generation.args.max_length,
                 "temperature": self.cfg.generation.args.temperature,
                 "do_sample": self.cfg.generation.args.do_sample,
             }
-            
+
             generate_ids = self.model.generate(
                 **inputs,
-                eos_token_id=self.processor.tokenizer.eos_token_id, 
+                eos_token_id=self.processor.tokenizer.eos_token_id,
                 no_repeat_ngram_size=self.cfg.generation.args.no_repeat_ngram_size,
                 **generation_args
             )
-            
+
             generate_ids = generate_ids[:, inputs['input_ids'].shape[1]:]
-            response = self.processor.batch_decode(generate_ids, skip_special_tokens=True, clean_up_tokenization_spaces=False)[0] 
+            response = self.processor.batch_decode(generate_ids, skip_special_tokens=True, clean_up_tokenization_spaces=False)[0]
 
             return response
-        
+
         except Exception as e:
             logging.error(f"Error during model generation: {e}")
             raise e
@@ -734,7 +849,7 @@ def get_adapter():
             api_key=os.environ["ANTHROPIC_API_KEY"]
             generator = ClaudeResponseGenerator(api_key=api_key)
             return generator
-        
+
     elif cfg.model.pretrained_model_name_or_path in HERON_TYPE1_LIST:
         device_id = 0
         device = f"cuda:{device_id}"
@@ -824,7 +939,15 @@ def get_adapter():
         generator = LLaVAJPResponseGenerator(cfg.model.pretrained_model_name_or_path, device)
 
         return generator
-        
+
+    elif cfg.model.pretrained_model_name_or_path in LLAVATANUKI_LIST:
+        #device_id = 0
+        #device = f"cuda:{device_id}"
+        device = "auto"
+        generator = LLAVATANUKIResponseGenerator(cfg.model.pretrained_model_name_or_path, device)
+
+        return generator
+
     elif cfg.model.pretrained_model_name_or_path in EvoVLM:
         device_id = 0
         device = f"cuda:{device_id}"
@@ -858,10 +981,10 @@ def get_adapter():
         device = f"cuda:{device_id}"
 
         model = AutoModelForCausalLM.from_pretrained(
-            cfg.model.pretrained_model_name_or_path, 
-            device_map="cuda", 
-            trust_remote_code=True, 
-            torch_dtype="auto", 
+            cfg.model.pretrained_model_name_or_path,
+            device_map="cuda",
+            trust_remote_code=True,
+            torch_dtype="auto",
             _attn_implementation='flash_attention_2',
         )
         processor = AutoProcessor.from_pretrained(cfg.model.pretrained_model_name_or_path, trust_remote_code=True)
