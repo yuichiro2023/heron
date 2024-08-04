@@ -1,8 +1,8 @@
 wandb:
   log: True
-  entity: "your-entity-name"
+  entity: "your_entity"
   project: "heron-leaderboard"
-  run_name: 'team-hatakeyama-phase2/Tanuki-8B-vision-v0-siglip-so400m-patch14-384'
+  run_name: 'team-hatakeyama-phase2/tanuki-8x8b_stage2/0802_new_2/checkpoint-10'
   launch: false
 
 # basic information
@@ -17,14 +17,14 @@ tokenizer_artifact: null
 
 model:
   _target_: null
-  pretrained_model_name_or_path: 'team-hatakeyama-phase2/Tanuki-8B-vision-v0-siglip-so400m-patch14-384'
+  pretrained_model_name_or_path: '/storage5/shiraishi/LLaVA-JP/output_llava/checkpoints/tanuki-8x8b_stage2/0802_new_2/checkpoint-10'
   torch_dtype: "bfloat16"
   ignore_mismatched_sizes: true
 
 processor:
   _target_: null
   pretrained_model_name_or_path: null
-  
+
 tokenizer:
   _target_: null
   pretrained_model_name_or_path: null
@@ -37,8 +37,8 @@ datasets:
 
 generation:
   args:
-    max_length: 256
-    do_sample: false
-    temperature: 0.0
-    top_p: 0.0
+    max_length: 500
+    do_sample: true
+    temperature: 0.2
+    top_p: 1.0
     no_repeat_ngram_size: 3
