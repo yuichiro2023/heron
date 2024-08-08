@@ -45,7 +45,12 @@ LLAVA_LIST = [
     'liuhaotian/llava-v1.5-13b-lora',
 ]
 LLAVAJP_LIST = [
-    'team-hatakeyama-phase2/Tanuki-8B-vision-v0-siglip-so400m-patch14-384',
+    'team-hatakeyama-phase2/Tanuki-8B-vision-v1_curation',
+    'team-hatakeyama-phase2/Tanuki-8B-vision-v4-checkpoint-18000',
+]
+LLAVATANUKI_LIST = [
+    '/storage5/shiraishi/LLaVA-JP/output_llava/checkpoints/tanuki-8x8b_stage2/0802_new_2/checkpoint-10',
+    '/storage5/shiraishi/work/LLaVA-JP/output_llava/checkpoints/finetune-llava-jp-Tanuki-moe-vision-zero3-multinode/checkpoint-900',
 ]
 EvoVLM = [
     'SakanaAI/EvoVLM-JP-v1-7B',
@@ -496,6 +501,118 @@ class LLaVAJPResponseGenerator:
 
         return output
 
+# for LLAVATanuki
+import os
+import torch
+import re
+from PIL import Image
+from config_singleton import WandbConfigSingleton
+
+from llavajp.constants import DEFAULT_IMAGE_TOKEN, IMAGE_TOKEN_INDEX
+from llavajp.conversation import conv_templates
+from llavajp.model.llava_tanuki import LlavaTanukiForCausalLM
+from llavajp.train.dataset import tokenizer_image_token
+
+# for LLAVATanuki
+class LLAVATANUKIResponseGenerator:
+    def __init__(self, model_path, device):
+        self.cfg = WandbConfigSingleton.get_instance().config
+
+        self.device = device
+        self.torch_dtype = torch.bfloat16 if "cuda" in self.device else torch.float32
+
+        self.model = LlavaTanukiForCausalLM.from_pretrained(
+            model_path,
+            low_cpu_mem_usage=True,
+            use_safetensors=True,
+            torch_dtype=self.torch_dtype,
+            device_map=self.device,
+        )
+
+        self.tokenizer = AutoTokenizer.from_pretrained(
+            model_path,
+            #model_max_length=8192,
+            model_max_length=4096,
+            padding_side="right",
+            use_fast=False,
+        )
+
+        self.model.eval()
+
+        self.conv_mode = "v1"
+
+    @torch.inference_mode()
+    def generate_response(self, question, image_path):
+        image = Image.open(image_path).convert("RGB")
+
+        image_size = self.model.get_model().vision_tower.image_processor.size["height"]
+        if self.model.get_model().vision_tower.scales is not None:
+            image_size = self.model.get_model().vision_tower.image_processor.size[
+                "height"
+            ] * len(self.model.get_model().vision_tower.scales)
+
+        if "cuda" in self.device:
+            image_tensor = (
+                self.model.get_model()
+                .vision_tower.image_processor(
+                    image,
+                    return_tensors="pt",
+                    size={"height": image_size, "width": image_size},
+                )["pixel_values"]
+                .half()
+                .cuda()
+                .to(self.torch_dtype)
+            )
+        else:
+            image_tensor = (
+                self.model.get_model()
+                .vision_tower.image_processor(
+                    image,
+                    return_tensors="pt",
+                    size={"height": image_size, "width": image_size},
+                )["pixel_values"]
+                .to(self.torch_dtype)
+            )
+
+        # create prompt
+        inp = DEFAULT_IMAGE_TOKEN + "\n" + question
+        conv = conv_templates[self.conv_mode].copy()
+        conv.append_message(conv.roles[0], inp)
+        conv.append_message(conv.roles[1], None)
+        prompt = conv.get_prompt()
+
+        input_ids = tokenizer_image_token(
+            prompt, self.tokenizer, IMAGE_TOKEN_INDEX, return_tensors="pt"
+        ).unsqueeze(0)
+        if "cuda" in self.device:
+            input_ids = input_ids.to(self.device)
+
+        input_ids = input_ids[:, :-1]  # </sep>がinputの最後に入るので削除する
+
+        output_ids = self.model.generate(
+            inputs=input_ids,
+            images=image_tensor,
+            max_new_tokens=self.cfg.generation.args.max_length,
+            do_sample=self.cfg.generation.args.do_sample,
+            temperature=self.cfg.generation.args.temperature,
+            use_cache=False,
+            top_p=self.cfg.generation.args.top_p,
+            repetition_penalty=1.,
+            no_repeat_ngram_size=self.cfg.generation.args.no_repeat_ngram_size,
+        )
+
+        output_ids = [
+            token_id for token_id in output_ids.tolist()[0] if token_id != IMAGE_TOKEN_INDEX
+        ]
+
+        output = self.tokenizer.decode(output_ids, skip_special_tokens=True)
+
+        target = "システム: "
+        idx = output.find(target)
+        output = output[idx + len(target) :]
+
+        return output
+
 # for Claude-3
 import os
 import io
@@ -824,7 +941,15 @@ def get_adapter():
         generator = LLaVAJPResponseGenerator(cfg.model.pretrained_model_name_or_path, device)
 
         return generator
-        
+
+    elif cfg.model.pretrained_model_name_or_path in LLAVATANUKI_LIST:
+        #device_id = 0
+        #device = f"cuda:{device_id}"
+        device = "auto"
+        generator = LLAVATANUKIResponseGenerator(cfg.model.pretrained_model_name_or_path, device)
+
+        return generator
+
     elif cfg.model.pretrained_model_name_or_path in EvoVLM:
         device_id = 0
         device = f"cuda:{device_id}"

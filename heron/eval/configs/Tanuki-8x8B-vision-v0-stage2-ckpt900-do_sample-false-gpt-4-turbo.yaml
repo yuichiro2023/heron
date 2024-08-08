@@ -2,7 +2,7 @@ wandb:
   log: True
   entity: "weblab-geniac1"
   project: "heron-leaderboard"
-  run_name: 'team-hatakeyama-phase2/Tanuki-8B-vision-v4-checkpoint-18000-do_sample-false-gpt-4-turbo'
+  run_name: 'team-hatakeyama-phase2/Tanuki-8x8B-vision-v0-stage2-ckpt900-do_sample-false-gpt-4-turbo'
   launch: false
 
 # basic information
@@ -17,7 +17,7 @@ tokenizer_artifact: null
 
 model:
   _target_: null
-  pretrained_model_name_or_path: 'team-hatakeyama-phase2/Tanuki-8B-vision-v4-checkpoint-18000'
+  pretrained_model_name_or_path: '/storage5/shiraishi/work/LLaVA-JP/output_llava/checkpoints/finetune-llava-jp-Tanuki-moe-vision-zero3-multinode/checkpoint-900'
   torch_dtype: "bfloat16"
   ignore_mismatched_sizes: true
 

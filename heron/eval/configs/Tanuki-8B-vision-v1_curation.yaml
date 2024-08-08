@@ -1,8 +1,8 @@
 wandb:
   log: True
-  entity: "weblab-geniac1"
-  project: "heron-leaderboard"
-  run_name: 'team-hatakeyama-phase2/Tanuki-8B-vision-v4-checkpoint-18000-do_sample-false-gpt-4-turbo'
+  entity: "morikoromori"
+  project: "heron-leaderboard_0803"
+  run_name: 'team-hatakeyama-phase2/Tanuki-8B-vision-v1_curation-gpt4o-other_gpu'
   launch: false
 
 # basic information
@@ -17,7 +17,7 @@ tokenizer_artifact: null
 
 model:
   _target_: null
-  pretrained_model_name_or_path: 'team-hatakeyama-phase2/Tanuki-8B-vision-v4-checkpoint-18000'
+  pretrained_model_name_or_path: 'team-hatakeyama-phase2/Tanuki-8B-vision-v1_curation'
   torch_dtype: "bfloat16"
   ignore_mismatched_sizes: true
 
@@ -38,7 +38,7 @@ datasets:
 generation:
   args:
     max_length: 500
-    do_sample: false
+    do_sample: true
     temperature: 0.2
     top_p: 1.0
     no_repeat_ngram_size: 3
